@@ -6,49 +6,55 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method Not Allowed" });
   }
 
-  // --- Configuration ---
   const MAILCHIMP_API_KEY = "3be4f4f92518cae699df3e6d67d592ed-us19";
   const MAILCHIMP_DC = "us19";
   const MAILCHIMP_LIST_ID = "f6a2ccd2fd";
-  const GOOGLE_WEBHOOK_KEY = "mySecretKey123"; // choose your secret
+  const GOOGLE_WEBHOOK_KEY = "mySecretKey123"; // your secret
 
   const body = req.body;
 
+  // --- Validate webhook key ---
   if (body.google_key !== GOOGLE_WEBHOOK_KEY) {
-    return res.status(403).json({ ok: false, error: "Bad key" });
+    return res.status(403).json({ success: false, error: "Bad key" });
   }
 
-  const map = {};
-  (body.user_column_data || []).forEach(row => {
-    if (row && row.column_id) map[row.column_id] = row.string_value || "";
-  });
+  // --- Respond immediately to Google Ads ---
+  res.status(200).json({ success: true });
 
-  let email = map.EMAIL || map.EMAIL_ADDRESS || "";
-  let first = map.FIRST_NAME || map.GIVEN_NAME || "";
-  let last = map.LAST_NAME || map.FAMILY_NAME || "";
-
-  if (!email) return res.status(200).json({ ok: true, skipped: "missing email" });
-
-  const lower = email.trim().toLowerCase();
-  const hash = crypto.createHash("md5").update(lower).digest("hex");
-  const url = `https://${MAILCHIMP_DC}.api.mailchimp.com/3.0/lists/${MAILCHIMP_LIST_ID}/members/${hash}`;
-
+  // --- Process Mailchimp asynchronously ---
   try {
+    const map = {};
+    (body.user_column_data || []).forEach(row => {
+      if (row && row.column_id) map[row.column_id] = row.string_value || "";
+    });
+
+    const email = map.EMAIL || map.EMAIL_ADDRESS || "";
+    const first = map.FIRST_NAME || map.GIVEN_NAME || "";
+    const last = map.LAST_NAME || map.FAMILY_NAME || "";
+
+    if (!email) return;
+
+    const lower = email.trim().toLowerCase();
+    const hash = crypto.createHash("md5").update(lower).digest("hex");
+
+    const url = `https://${MAILCHIMP_DC}.api.mailchimp.com/3.0/lists/${MAILCHIMP_LIST_ID}/members/${hash}`;
+
+    // --- Add/Update subscriber with tag ---
     await axios.put(
       url,
       {
         email_address: lower,
         status_if_new: "subscribed",
-        merge_fields: { FNAME: first || "", LNAME: last || "" }
+        merge_fields: { FNAME: first || "", LNAME: last || "" },
+        tags: ["GOOGLE_ADS_LEADS"]
       },
       {
         auth: { username: "anystring", password: MAILCHIMP_API_KEY }
       }
     );
 
-    res.status(200).json({ ok: true });
+    console.log("Mailchimp: subscriber added/updated with tag GOOGLE_ADS_LEADS");
   } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(200).json({ ok: true });
+    console.error("Mailchimp error:", err.response?.data || err.message);
   }
 }
